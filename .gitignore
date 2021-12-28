@@ -1,0 +1,8 @@
+solver/__pycache__/__init__.cpython-310.pyc
+solver/__pycache__/lp_tools.cpython-310.pyc
+solver/__pycache__/Solver.cpython-310.pyc
+.idea/.gitignore
+.idea/fpl_stuff.iml
+.idea/fpl.iml
+.idea/misc.xml
+.idea/modules.xml
