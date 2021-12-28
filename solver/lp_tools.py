@@ -1,8 +1,9 @@
-"""Structure classes for linear programming variables.
+"""Structures for linear programming variables.
 
 Allows multi-dimensional arrays of objects to be processed in parallel using element-wise
 operations, with full support for pulp.LpVariable objects, unlike numpy or pandas classes.
-
+Arithmetic operations avaible across and between classes, and constraints can be added in
+conjunction with LpProblem (outer class for pulp.LpProblem).
 
     Typical usage example:
 
@@ -10,13 +11,17 @@ operations, with full support for pulp.LpVariable objects, unlike numpy or panda
 """
 
 
-class DecisionArray:
+class LpProblem:
     pass
 
 
-class DecisionMatrix:
+class LpArray:
     pass
 
 
-class DecisionTensor:
+class LpMatrix:
+    pass
+
+
+class LpTensor:
     pass
