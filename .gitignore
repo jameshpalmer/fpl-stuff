@@ -1,6 +1,4 @@
-solver/__pycache__/__init__.cpython-310.pyc
-solver/__pycache__/lp_tools.cpython-310.pyc
-solver/__pycache__/Solver.cpython-310.pyc
+solver/__pycache__/
 solver/.DS_Store
 .idea/
 .vscode/
