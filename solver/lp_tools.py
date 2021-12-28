@@ -11,24 +11,42 @@ conjunction when associated with LpProblem (outer class for pulp.LpProblem).
 
 """
 
+import pulp
+import numpy as np
+from numpy.typing import ArrayLike
+
 
 class LpProblem:
     pass
 
 
 class LpArray:
-    def __init__(self, data, index, prob):
+    def __init__(self, data: ArrayLike = None, index: ArrayLike = None, prob: LpProblem = None):
         pass
 
     @classmethod
-    def variable():
-        pass
+    def variable(cls, name: str, index: ArrayLike = None, lower: float = None, upper: float = None, cat: type = None):
+        """Create LpArray containing pulp.LpVariable objects.
+
+        Args:
+            name (str): Name for pulp.LpVariable
+            index (ArrayLike, optional): [description]. Defaults to empty
+            lower (float, optional) : Lower bound for variables to be created. Defaults to None
+            upper (float, optional): Upper bound for variables to be created. Defaults to None
+            cat (type, optional): Category of variables: bool, int, or float. Defaults to float
+        """
 
 
 class LpMatrix:
-    def to_tensor(self):
+    def to_tensor(self) -> 'LpTensor':
         pass
 
 
 class LpTensor:
-    pass
+    def get_diag(self) -> LpMatrix:
+        pass
+
+
+if __name__ == '__main__':
+    lp = pulp.LpVariable('lp', )
+    LpArray.variable
