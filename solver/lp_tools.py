@@ -1,4 +1,4 @@
-"""Structures for linear programming variables, assisting the implementation of vector-based LP problems.
+"""Structures for linear programming variables, simplifying the implementation of vector-based LP problems.
 
 Classes allow multi-dimensional arrays of objects to be processed in parallel using element-wise operations, with full
 support for `pulp.LpVariable` objects, unlike `numpy` or `pandas` classes. Arithmetic operations avaible across and
