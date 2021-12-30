@@ -13,6 +13,7 @@ and constraints can be added when associated with LpProblem (outer class for pul
 import pulp
 import numpy as np
 from numpy.typing import ArrayLike
+import pandas as pd
 
 
 class LpProblem:
@@ -20,8 +21,8 @@ class LpProblem:
 
 
 class LpArray:
-    """1-Dimensional array-like structure with support for pulp.LpVariable objects, and support for applying
-    element-wise PuLP constraints when associated with LpProblem.
+    """1-Dimensional array-like structure with support for pulp.LpVariable objects, and support for applying element-
+    wise PuLP constraints when associated with LpProblem.
     """
 
     def __init__(self, data: ArrayLike = None, index: ArrayLike = None, prob: LpProblem = None):
@@ -32,10 +33,24 @@ class LpArray:
             index (ArrayLike, optional): Paired indices of values. Defaults to None.
             prob (LpProblem, optional): Associated LpProblem object for constraint application. Defaults to None.
         """
-        pass
+        if data is None:
+            data = []
+
+        if index is None:
+            index = []
+
+        try:
+            if len(data) != len(index):
+                raise Exception("data and index have different lengths")
+        except TypeError:
+            raise TypeError("data and/or index are not array-like")
+
+        self.values = np.array(data)
+        self.index = np.array(index)
+        self.prob = prob
 
     @classmethod
-    def from_dict(cls, data: dict = None, prob: LpProblem = None):
+    def from_dict(cls, data: dict = None, prob: LpProblem = None, sort_index: bool = False):
         """Initialise LpArray with data from dict, with the following parameters:
 
         Args:
@@ -43,9 +58,13 @@ class LpArray:
                  index[1]: values[n]}. Defaults to None.
             prob (LpProblem, optional): [description]. Defaults to None.
         """
+        if sort_index:
+            data = dict(sorted(data.items()))  #  Sort dict by keys
+        return cls(list(data.values()), list(data.keys()), prob)    # Initialise class instance from dict
 
     @classmethod
-    def variable(cls, name: str, index: ArrayLike = None, lower: float = None, upper: float = None, cat: type = None):
+    def variable(cls, name: str, index: ArrayLike = None, lower: float = None, upper: float = None, cat: type = None,
+                 prob: LpProblem = None):
         """Initialise LpArray containing pulp.LpVariable objects, with the following parameters:
 
         Args:
@@ -55,6 +74,12 @@ class LpArray:
             upper (float, optional): Upper bound for variables to be created. Defaults to None
             cat (type, optional): Category of variables: bool, int, or float. Defaults to float
         """
+        # Generate and process dict of pulp.LpVariable objects
+        return cls.from_dict(pulp.LpVariable.dict(name, index, lower, upper, (
+            'Binary', 'Integer', 'Continuous')[(bool, int, float).index(cat)]), prob)
+
+    def __str__(self):
+        return str(pd.Series(self.values, self.index))
 
 
 class LpMatrix:
@@ -68,6 +93,6 @@ class LpTensor:
 
 
 if __name__ == '__main__':
-    lp = pulp.LpVariable()
-    LpArray.variable
-    LpArray.from_dict
+    lp = pulp.LpVariable
+    a = LpArray.variable('Bench', range(100), cat=int)
+    print(a)
