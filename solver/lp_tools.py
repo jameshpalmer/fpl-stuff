@@ -6,13 +6,14 @@ and constraints can be added when associated with LpProblem (outer class for pul
 
     Typical usage example:
 
-    #TODO
+    # TODO
 
 """
 
 import pulp
 import numpy as np
 from numpy.typing import ArrayLike
+from typing import Type
 import pandas as pd
 
 
@@ -50,13 +51,17 @@ class LpArray:
         self.prob = prob
 
     @classmethod
-    def from_dict(cls, data: dict = None, prob: LpProblem = None, sort_index: bool = False):
+    def from_dict(cls, data: dict = None, prob: LpProblem = None, sort_index: bool = False) -> 'LpArray':
         """Initialise LpArray with data from dict, with the following parameters:
 
         Args:
             data (dict, optional): dict (length n) object containing {index[0]: values[0], index[1]: values[1], ..., \
                  index[1]: values[n]}. Defaults to None.
-            prob (LpProblem, optional): [description]. Defaults to None.
+            prob (LpProblem, optional): LpProblem associated with LpArray instance. Defaults to None.
+            sort_index (bool, optional): If true, return LpArray.from_dict(dict(sorted(dict.values())), ...)
+
+        Returns:
+            LpArray: with values dict.values() and index dict.keys()
         """
         if sort_index:
             data = dict(sorted(data.items()))  #  Sort dict by keys
@@ -64,22 +69,34 @@ class LpArray:
 
     @classmethod
     def variable(cls, name: str, index: ArrayLike = None, lower: float = None, upper: float = None, cat: type = None,
-                 prob: LpProblem = None):
+                 prob: LpProblem = None) -> 'LpArray[pulp.LpVariable]':
         """Initialise LpArray containing pulp.LpVariable objects, with the following parameters:
 
         Args:
             name (str): Name for pulp.LpVariable
-            index (ArrayLike, optional): [description]. Defaults to empty
+            index (ArrayLike, optional): Index of returned LpArray. Defaults to empty
             lower (float, optional) : Lower bound for variables to be created. Defaults to None
             upper (float, optional): Upper bound for variables to be created. Defaults to None
             cat (type, optional): Category of variables: bool, int, or float. Defaults to float
+            prob (LpProblem, optional): LpProblem associated with variables
+
+        Returns:
+            LpArray: with values that are pulp.LpVariable instances, named f'{name}_{i}' for all i in index
         """
         # Generate and process dict of pulp.LpVariable objects
         return cls.from_dict(pulp.LpVariable.dict(name, index, lower, upper, (
             'Binary', 'Integer', 'Continuous')[(bool, int, float).index(cat)]), prob)
 
-    def __str__(self):
-        return str(pd.Series(self.values, self.index))
+    def __str__(self) -> str:
+        """Convert LpArray to string for easy readability.
+
+        Returns:
+            str: pandas.Series-style overview of array
+        """
+        if self.values.size == 0:
+            return 'LpArray([])'
+
+        return str(pd.Series([str(i) for i in self.values], self.index))
 
 
 class LpMatrix:
@@ -95,4 +112,5 @@ class LpTensor:
 if __name__ == '__main__':
     lp = pulp.LpVariable
     a = LpArray.variable('Bench', range(100), cat=int)
+
     print(a)
