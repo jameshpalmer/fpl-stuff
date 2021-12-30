@@ -11,7 +11,6 @@ between classes, and constraints can be added when associated with LpProblem (ou
 """
 import pulp
 import numpy as np
-from numpy.typing import ArrayLike
 import pandas as pd
 from typing import Sequence, Any
 
@@ -29,10 +28,10 @@ class LpArray:
         """This class models an array with the following parameters:
 
         Args:
-            data (Sequence, optional): Values contained in `LpArray`. Defaults to `None`.
+            data (Sequence, optional): Values contained in `LpArray`. Defaults to `None`
             index (Sequence[float], optional): Indices (usually `int`) paired to corrresponding values. Defaults to \
-                 `None`.
-            prob (LpProblem, optional): Associated `LpProblem` object for constraint application. Defaults to `None`.
+                 `None`
+            prob (LpProblem, optional): Associated `LpProblem` object for constraint application. Defaults to `None`
         """
         if type(data) == LpArray:
             self.values = data.values
@@ -66,8 +65,8 @@ class LpArray:
 
         Args:
             data (dict, optional): `dict` (length n) object containing `{index[0]: values[0], index[1]: values[1], \
-                  ..., index[1]: values[n]}`. Defaults to `None`.
-            prob (LpProblem, optional): LpProblem associated with LpArray instance. Defaults to None.
+                  ..., index[n]: values[n]}`. Defaults to `None`
+            prob (LpProblem, optional): LpProblem associated with LpArray instance. Defaults to `None`
             sort_index (bool, optional): If `True`, return `LpArray.from_dict(dict(sorted(dict.values())), ...)`
 
         Returns:
@@ -109,6 +108,7 @@ class LpArray:
         return str(pd.Series([str(i) for i in self.values], self.index))
 
     def __len__(self) -> int:
+        """Returns the length of the index."""
         return len(self.index)
 
     def __getitem__(self, item: float | Sequence[bool]) -> Any:
@@ -117,7 +117,6 @@ class LpArray:
         Args:
             item (float | Sequence[bool]): Index corrresponding to wanted value, or sequence of binary values, where \
                 nth element corresponds to whether to include nth index/value pair in output `LpArray`
-
 
         Returns:
             Any: Value corresponding to passed index, or `LpArray` corresponding to passed binary inclusion sequence
@@ -128,7 +127,7 @@ class LpArray:
 
         except ValueError:  # Item is an invalid index
             try:
-                return self.filter(item)    # Get item as filter
+                return self.filter(item)    # Get item as filter, as in Pandas.DataFrame
 
             except ValueError:  # Item is an invalid filter
                 try:
@@ -172,8 +171,6 @@ class LpTensor:
 
 
 if __name__ == '__main__':
-    print(isinstance(1, bool))
-    lp = pulp.LpVariable
     a = LpArray.variable('Bench', range(100), cat=int)
     random = np.random.randint(2, size=100)
     print(a[[0, 1] * 50])
