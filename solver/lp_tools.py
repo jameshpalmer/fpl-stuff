@@ -12,7 +12,8 @@ between classes, and constraints can be added when associated with LpProblem (ou
 import pulp
 import numpy as np
 import pandas as pd
-from typing import Sequence, Any
+from typing import Union, Callable, Sequence, Any
+from operator import add, sub, mul
 
 
 class LpProblem:
@@ -47,7 +48,7 @@ class LpArray:
             data = np.array([])
 
         if index is None:
-            index = np.array([])
+            index = np.arange(len(data))
 
         try:
             if len(data) != len(index):
@@ -84,7 +85,7 @@ class LpArray:
         Args:
             name (str): Name for `pulp.LpVariable`
             index (Sequence[float], optional): Index of returned `LpArray`. Defaults to `None`
-            lower (float, optional) : Lower bound for variables to be created. Defaults to `None`
+            lower (float, optional): Lower bound for variables to be created. Defaults to `None`
             upper (float, optional): Upper bound for variables to be created. Defaults to `None`
             cat (type, optional): Category of variables: `bool`, `int`, or `float`. Defaults to `float`
             prob (LpProblem, optional): LpProblem associated with variables
@@ -134,12 +135,81 @@ class LpArray:
                     # Get list of locations of referenced indices
                     indices = [self.index.tolist().index(i) for i in item]
                     # Return list of values corresponding to referenced indices
-                    return [self.values[i] for i in indices]
+                    return np.array([self.values[i] for i in indices])
                 except ValueError as e:
                     raise ValueError(f"Invalid LpArray index/filter: {item} ({e})")
 
             except TypeError:   # Item has no len and is not in index
                 raise ValueError(f"Invalid LpArray index/filter: {item}")
+
+    def operator(self, operation: Callable, other: Union['LpArray', pd.Series, np.ndarray, list, float],
+                 drop: bool = True) -> 'LpArray':
+        """Generic method for numerical operations, such as addition, subtraction, multiplication.
+
+        Args:
+            operation (Callable): Relevant operation (from operator library)
+            other (Union['LpArray', pd.Series, np.ndarray, list, float]): Value or 1d data to be operated on
+            drop (bool, optional): If `True`, remove non-shared indices, if `False` retain as original value. \
+                Defaults to `False`
+
+        Raises:
+            ValueError: Attempt to operate on `LpArray` with `list` or `np.array` of different size
+
+        Returns:
+            LpArray: Array with relevant index and new values attributes
+        """
+        try:
+            prob = self.prob or other.prob  # If other is type LpArray, prob can be acquired from other
+        except AttributeError:
+            prob = self.prob    # Otherwise prob is inherited from self
+
+        match other:
+            case LpArray() | pd.Series():
+                if (other.index == self.index).all():
+                    # Add values of self and other
+                    return LpArray(operation(self.values, other.values), self.index, prob)
+                elif drop:
+                    intersect = np.intersect1d(self.index, other.index)  # Get common indices
+                    # Apply operations to common indices
+                    return LpArray(operation(self[intersect], other[intersect]), intersect, prob)
+                else:
+                    intersect = np.intersect1d(self.index, other.index)  # Get common indices
+                    # Get non-commin indices
+                    diff_self = np.setdiff1d(self.index, other.index)
+                    diff_other = np.setdiff1d(other.index, self.index)
+
+                    # Concatenate arrays of indices
+                    index = np.concatenate([np.atleast_1d(a) for a in (intersect, diff_self, diff_other)])
+                    # Get values associated with index
+                    values = np.concatenate([np.atleast_1d(a) for a in (
+                        operation(self[intersect], other[intersect]), self[diff_self], other[diff_other])])
+                    return LpArray(values, index, prob)
+
+            case np.ndarray() | list():
+                if len(other) != len(self):  # other must be same size, for convenience
+                    raise ValueError(f"Attempted to {operation.__name__} LpArray to list/np.array of different size")
+                return LpArray(operation(self.values, other), self.index, prob)
+
+            case float() | int():
+                return LpArray(operation(self.values, other), self.index, prob)
+
+    # Apply generic operation method to specific operations
+    def __add__(self, other, drop=True):
+        return self.operator(add, other, drop)
+    __radd__ = __add__
+
+    def __sub__(self, other, drop=True):
+        return self.operator(sub, other, drop)
+
+    def __rsub__(self, other, drop=True):
+        return -self.operator(sub, other, drop)
+
+    def __mul__(self, other, drop=True):
+        return self.operator(mul, other, drop)
+    __rmul__ = __mul__
+
+    def __neg__(self):
+        return LpArray(-self.values, self.index, self.prob)
 
     def filter(self, item: Sequence[bool]) -> 'LpArray':
         """Filter `LpArray` with a binary sequence.
@@ -159,6 +229,10 @@ class LpArray:
         return LpArray(data=[self.values[index] for index, i in enumerate(item) if i == 1], index=[
             self.index[index] for index, i in enumerate(item) if i == 1], prob=self.prob)
 
+    @property
+    def shape(self):
+        return self.values.shape
+
 
 class LpMatrix:
     def to_tensor(self) -> 'LpTensor':
@@ -172,5 +246,6 @@ class LpTensor:
 
 if __name__ == '__main__':
     a = LpArray.variable('Bench', range(100), cat=int)
-    random = np.random.randint(2, size=100)
-    print(a[[0, 1] * 50])
+    b = LpArray.variable('Lineup', range(100), cat=bool)
+    b.index += 10
+    a.index -= 10
