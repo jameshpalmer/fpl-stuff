@@ -16,14 +16,6 @@ from typing import Union, Literal, Callable, Sequence, Any
 from operator import add, sub, mul
 
 
-class Indexer:
-    def __init__(self, data):
-        pass
-
-    def __getitem__(self, item):
-        pass
-
-
 class LpProblem:
     pass
 
