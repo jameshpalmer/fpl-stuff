@@ -1,4 +1,4 @@
-"""Structures for linear programming variables, simplifying the implementation of vector-based LP problems.
+"""Array-based structures for linear programming variables, simplifying the implementation of vector-based LP problems.
 
 Classes allow multi-dimensional arrays of objects to be processed in parallel using element-wise operations, with full
 support for `pulp.LpVariable` objects, unlike `numpy` or `pandas` classes. Arithmetic operations avaible across and
@@ -12,16 +12,27 @@ between classes, and constraints can be added when associated with LpProblem (ou
 import pulp
 import numpy as np
 import pandas as pd
-from typing import Union, Callable, Sequence, Any
+from typing import Union, Literal, Callable, Sequence, Any
 from operator import add, sub, mul
+
+
+class Indexer:
+    def __init__(self, data):
+        pass
+
+    def __getitem__(self, item):
+        pass
 
 
 class LpProblem:
     pass
 
 
+pd.Series
+
+
 class LpArray:
-    """1-Dimensional `pd.Series`-like structure with support for `pulp.LpVariable` objects, and support for \
+    """1-Dimensional ``-like structure with support for `pulp.LpVariable` objects, and support for \
     applying element-wise PuLP constraints when associated with `LpProblem`.
     """
 
@@ -34,15 +45,6 @@ class LpArray:
                  `None`
             prob (LpProblem, optional): Associated `LpProblem` object for constraint application. Defaults to `None`
         """
-        if type(data) == LpArray:
-            self.values = data.values
-
-            if index is None:
-                self.index = data.index
-
-            if prob is None:
-                self.prob = data.prob
-
         # Default for values and index is empty
         if data is None:
             data = np.array([])
@@ -52,13 +54,20 @@ class LpArray:
 
         try:
             if len(data) != len(index):
-                raise Exception("data and index have different lengths")
+                raise ValueError("data and index have different lengths")
         except TypeError:
             raise TypeError("data and/or index are not sequential")
 
-        self.values = np.array(data)
-        self.index = np.array(index)
-        self.prob = prob
+        if type(data) == LpArray:
+            self.values = data.values
+
+            if index is None:
+                self.index = data.index
+
+            if prob is None:
+                self.prob = data.prob
+
+        self.values, self.index, self.prob = np.array(data), np.array(index), prob
 
     @classmethod
     def from_dict(cls, data: dict = None, prob: LpProblem = None, sort_index: bool = False) -> 'LpArray':
@@ -106,41 +115,85 @@ class LpArray:
         if self.values.size == 0:   # If empty LpArray
             return 'LpArray([])'
 
-        return str(pd.Series([str(i) for i in self.values], self.index))
+        return '\n'.join(str(pd.Series([str(i) for i in self.values], self.index)).split(
+            '\n')[:-1]) + f"\nLength: {len(self)}, dtype: {type(self.values[0]).__name__}"
 
     def __len__(self) -> int:
         """Returns the length of the index."""
         return len(self.index)
 
+    def __iter__(self):
+        """Iterate through `self.values`"""
+        for value in self.values:
+            yield value
+
     def __getitem__(self, item: float | Sequence[bool]) -> Any:
-        """Get item or subset of items from `self.values`, By index or binary inclusion sequence.
+        """Returns item or subset of items from `self.values`, By index or binary inclusion sequence.
 
         Args:
             item (float | Sequence[bool]): Index corrresponding to wanted value, or sequence of binary values, where \
                 nth element corresponds to whether to include nth index/value pair in output `LpArray`
 
+        Raises:
+            ValueError: Invalid index or filter
+
         Returns:
             Any: Value corresponding to passed index, or `LpArray` corresponding to passed binary inclusion sequence
         """
-        try:
-            index = self.index.tolist().index(item)  # Get item as index
-            return self.values[index]   # Return corresponding value
+        match item:
+            case float() | int() | np.int64():  # For 0d index references
+                index = self.index.tolist().index(item)  # Get item as index
+                return self.values[index]   # Return corresponding value
 
-        except ValueError:  # Item is an invalid index
-            try:
-                return self.filter(item)    # Get item as filter, as in Pandas.DataFrame
-
-            except ValueError:  # Item is an invalid filter
+            case Sequence:  # 1d index references
                 try:
-                    # Get list of locations of referenced indices
-                    indices = [self.index.tolist().index(i) for i in item]
-                    # Return list of values corresponding to referenced indices
-                    return np.array([self.values[i] for i in indices])
-                except ValueError as e:
-                    raise ValueError(f"Invalid LpArray index/filter: {item} ({e})")
+                    return self.filter(item)    # Try item as binary filter
+                except ValueError:
+                    return self.get_subset(item)    # Try item as sequence of indices
 
-            except TypeError:   # Item has no len and is not in index
-                raise ValueError(f"Invalid LpArray index/filter: {item}")
+    def filter(self, item: Sequence[bool], inplace: bool = False) -> 'LpArray':
+        """Filter `LpArray` using a binary sequence of the same length.
+
+        Args:
+            item (Sequence[bool]): Squence of `bool` values, indicating whether to include nth value in nth entry
+            inplace (bool): True => filter existing object. False => return new filtered object
+
+        Raises:
+            ValueError: Attempt to filter with non-binary or differently-sized data
+
+         Returns:
+             LpArray: Filtered LpArray
+         """
+        if len(item) != len(self):  # Filter has the wrong length
+            raise ValueError(
+                f"Invalid LpArray filter: {item} does not have the same length as LpArray \
+                    ({len(item)} vs. {len(self)})")
+
+        if not all([(i in (0, 1)) for i in item]):  # Filter is not binary
+            raise ValueError(f"Invalid LpArray filter: {item} is not a binary sequence")
+
+        # Return LpArray with only "1" indices still in place
+        if inplace:
+            self.data = np.array([self[index] for index, i in zip(self.index, item) if i == 1])
+            self.index = np.array([self.index[index] for index, i in enumerate(item) if i == 1])
+        else:
+            return LpArray(data=[self[index] for index, i in zip(self.index, item) if i == 1], index=[
+                self.index[index] for index, i in enumerate(item) if i == 1], prob=self.prob)
+
+    def get_subset(self, item: Sequence[float], by: Literal['index', 'location'] = 'index') -> 'LpArray':
+        """Gets subset of `LpArray` based on indices (default) or location of items
+
+        Args:
+            item (Sequence[float]): Sequence of indices/locations to be selected in returned LpArray
+            by (Literal['index', 'location']): If elements are to be selected by index or location
+
+        Returns:
+            LpArray: Containing only the subset of wanted elements
+        """
+        if by == 'index':
+            return self.filter([int(i in item) for i in self.index])
+        elif by == 'location':
+            return self.filter([int(i in item) for i in range(len(self))])
 
     def operator(self, operation: Callable, other: Union['LpArray', pd.Series, np.ndarray, list, float],
                  drop: bool = True) -> 'LpArray':
@@ -171,27 +224,31 @@ class LpArray:
                 elif drop:
                     intersect = np.intersect1d(self.index, other.index)  # Get common indices
                     # Apply operations to common indices
-                    return LpArray(operation(self[intersect], other[intersect]), intersect, prob)
-                else:
-                    intersect = np.intersect1d(self.index, other.index)  # Get common indices
-                    # Get non-commin indices
-                    diff_self = np.setdiff1d(self.index, other.index)
-                    diff_other = np.setdiff1d(other.index, self.index)
+                    return LpArray(operation(self.values[intersect], other.values[intersect]), intersect, prob)
 
-                    # Concatenate arrays of indices
-                    index = np.concatenate([np.atleast_1d(a) for a in (intersect, diff_self, diff_other)])
-                    # Get values associated with index
-                    values = np.concatenate([np.atleast_1d(a) for a in (
-                        operation(self[intersect], other[intersect]), self[diff_self], other[diff_other])])
-                    return LpArray(values, index, prob)
+                intersect = np.intersect1d(self.index, other.index)  # Get common indices
+                # Get non-commin indices
+                diff_self = np.setdiff1d(self.index, other.index)
+                diff_other = np.setdiff1d(other.index, self.index)
+
+                # Concatenate arrays of indices
+                index = np.concatenate([np.atleast_1d(a) for a in (intersect, diff_self, diff_other)])
+                # Get values associated with index
+                values = np.concatenate([np.atleast_1d(a) for a in (
+                    operation(self[intersect], other[intersect]), self[diff_self], other[diff_other])])
+                return LpArray(values, index, prob)
 
             case np.ndarray() | list():
                 if len(other) != len(self):  # other must be same size, for convenience
-                    raise ValueError(f"Attempted to {operation.__name__} LpArray to list/np.array of different size")
+                    raise ValueError(
+                        f"cannot {operation.__name__} 'LpArray' to '{type(other).__name__}' of different size")
                 return LpArray(operation(self.values, other), self.index, prob)
 
-            case float() | int():
+            case float() | int() | np.int64():
                 return LpArray(operation(self.values, other), self.index, prob)
+
+            case _:  # Invalid data type for operation
+                raise TypeError(f"cannot {operation.__name__} types 'LpArray' and '{type(other).__name__}'")
 
     # Apply generic operation method to specific operations
     def __add__(self, other, drop=True):
@@ -211,27 +268,17 @@ class LpArray:
     def __neg__(self):
         return LpArray(-self.values, self.index, self.prob)
 
-    def filter(self, item: Sequence[bool]) -> 'LpArray':
-        """Filter `LpArray` with a binary sequence.
-
-        Args:
-            item (Sequence[bool]): Squence of `bool` values, indicating whether to include nth value in nth entry
-
-         Returns:
-             LpArray: Filtered LpArray
-         """
-        if len(item) != len(self):  # Filter has the wrong length
-            raise ValueError(f"Invalid LpArray filter: {item} is not the same length.")
-
-        if not all([(i in (0, 1)) for i in item]):  # Filter is not binary
-            raise ValueError(f"Invalid LpArray filter: {item} is not a binary sequence.")
-
-        return LpArray(data=[self.values[index] for index, i in enumerate(item) if i == 1], index=[
-            self.index[index] for index, i in enumerate(item) if i == 1], prob=self.prob)
-
     @property
     def shape(self):
+        """Returns the shape of the values/index."""
         return self.values.shape
+
+    @property
+    def loc(self):
+        return Indexer(self.index, self.values)
+
+    def iloc(self):
+        return Indexer(range(len(self)), self.values)
 
 
 class LpMatrix:
@@ -246,6 +293,8 @@ class LpTensor:
 
 if __name__ == '__main__':
     a = LpArray.variable('Bench', range(100), cat=int)
-    b = LpArray.variable('Lineup', range(100), cat=bool)
-    b.index += 10
-    a.index -= 10
+    a.index += 10
+    b = LpArray.variable('Lineup', range(100), cat=int)
+    x = a + b - 1
+    for i in x:
+        print(i)
