@@ -20,9 +20,6 @@ class LpProblem:
     pass
 
 
-pd.Series
-
-
 class LpArray:
     """1-Dimensional ``-like structure with support for `pulp.LpVariable` objects, and support for \
     applying element-wise PuLP constraints when associated with `LpProblem`.
