@@ -262,13 +262,6 @@ class LpArray:
         """Returns the shape of the values/index."""
         return self.values.shape
 
-    @property
-    def loc(self):
-        return Indexer(self.index, self.values)
-
-    def iloc(self):
-        return Indexer(range(len(self)), self.values)
-
 
 class LpMatrix:
     def to_tensor(self) -> 'LpTensor':
