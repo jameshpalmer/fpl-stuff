@@ -21,11 +21,11 @@ class LpProblem:
 
 
 class LpArray:
-    """1-Dimensional ``-like structure with support for `pulp.LpVariable` objects, and support for \
+    """1-Dimensional `pandas.Series`-like structure with support for `pulp.LpVariable` objects, and support for \
     applying element-wise PuLP constraints when associated with `LpProblem`.
     """
 
-    def __init__(self, data: Sequence = None, index: Sequence[float] = None, prob: LpProblem = None):
+    def __init__(self, data: Sequence | 'LpArray' = None, index: Sequence[float] = None, prob: LpProblem = None):
         """This class models an array with the following parameters:
 
         Args:
@@ -34,7 +34,7 @@ class LpArray:
                  `None`
             prob (LpProblem, optional): Associated `LpProblem` object for constraint application. Defaults to `None`
         """
-        # Default for values and index is empty
+        # Default for values and index are empty
         if data is None:
             data = np.array([])
 
@@ -117,7 +117,8 @@ class LpArray:
             yield value
 
     def __getitem__(self, item: float | Sequence[bool]) -> Any:
-        """Returns item or subset of items from `self.values`, By index or binary inclusion sequence.
+        """Returns item or subset of items from `self.values`, By index *OR* binary inclusion sequence.\
+            Works only if item is not repeated in `self.index`.
 
         Args:
             item (float | Sequence[bool]): Index corrresponding to wanted value, or sequence of binary values, where \
@@ -145,7 +146,7 @@ class LpArray:
 
         Args:
             item (Sequence[bool]): Squence of `bool` values, indicating whether to include nth value in nth entry
-            inplace (bool): True => filter existing object. False => return new filtered object
+            inplace (bool): True => filter existing object. False => return new filtered object. Defaults to `False`
 
         Raises:
             ValueError: Attempt to filter with non-binary or differently-sized data
@@ -169,20 +170,35 @@ class LpArray:
             return LpArray(data=[self[index] for index, i in zip(self.index, item) if i == 1], index=[
                 self.index[index] for index, i in enumerate(item) if i == 1], prob=self.prob)
 
-    def get_subset(self, item: Sequence[float], by: Literal['index', 'location'] = 'index') -> 'LpArray':
+    def get_subset(self, item: Sequence[float], by: Literal['index', 'location'] = 'index',
+                   sorted: bool = False) -> 'LpArray':
         """Gets subset of `LpArray` based on indices (default) or location of items
 
         Args:
             item (Sequence[float]): Sequence of indices/locations to be selected in returned LpArray
-            by (Literal['index', 'location']): If elements are to be selected by index or location
+            by (Literal['index', 'location']): If elements are to be selected by index or location.\
+                Defailts to `'index'`
+            sorted (bool): If True, repeating/unsorted items are condensed/sorted (e.g. (1, 1, 0) -> (0, 1)).\
+                Defaults to `False`
 
         Returns:
             LpArray: Containing only the subset of wanted elements
         """
+        if sorted:
+            if by == 'index':
+                return self.filter([int(i in item) for i in self.index])    # Filter self by corresponding index
+            elif by == 'location':
+                return self.filter([int(i in item) for i in range(len(self))])  # Filter self by corresponding location
+            raise(ValueError(f"Argument 'by' must be one of ('index', 'location'), not {by}"))
+
         if by == 'index':
-            return self.filter([int(i in item) for i in self.index])
-        elif by == 'location':
-            return self.filter([int(i in item) for i in range(len(self))])
+            item = [np.where(self.index == i)[0][0] for i in item]  # Change item from index to location reference
+
+        return LpArray(self.values[item], self.index[item], self.prob)
+
+    def sort_index(self):
+        self.values = np.array([val for _, val in sorted(zip(self.index, self.values))])
+        self.index = sorted(self.index)
 
     def operator(self, operation: Callable, other: Union['LpArray', pd.Series, np.ndarray, list, float],
                  drop: bool = True) -> 'LpArray':
@@ -212,6 +228,8 @@ class LpArray:
                     return LpArray(operation(self.values, other.values), self.index, prob)
                 elif drop:
                     intersect = np.intersect1d(self.index, other.index)  # Get common indices
+                    print(self[intersect], other[intersect])
+                    print(intersect)
                     # Apply operations to common indices
                     return LpArray(operation(self[intersect], other[intersect]), intersect, prob)
 
@@ -219,19 +237,19 @@ class LpArray:
                 # Get non-commin indices
                 diff_self = np.setdiff1d(self.index, other.index)
                 diff_other = np.setdiff1d(other.index, self.index)
-                print(intersect, diff_self, diff_other)
 
                 # Concatenate arrays of indices
                 index = np.concatenate([np.atleast_1d(a) for a in (diff_self, intersect, diff_other)])
                 # Get values associated with index
-                values = np.concatenate([np.atleast_1d(a) for a in (self[diff_self],
-                                                                    operation(self[intersect], other[intersect]), other[diff_other])])
+                values = np.concatenate([np.atleast_1d(a) for a in (self[diff_self], operation(
+                    self[intersect], other[intersect]), other[diff_other])])
 
                 if np.all(index[:-1] <= index[1:]):  # Case if index is sorted
                     return LpArray(values, index, prob)
 
                 # Put all index/value pairs into dict
-                values_dict = {index: value for index, value in zip(intersect, operation(self[intersect], other[intersect]))} | {
+                values_dict = {index: value for index, value in zip(
+                    intersect, operation(self[intersect], other[intersect]))} | {
                     index: value for index, value in zip(diff_self, self[diff_self])} | {
                         index: value for index, value in zip(diff_other, other[diff_other])}
                 return_data = (list(zip(*sorted(values_dict.items()))))  # Unzip sorted dict
@@ -270,13 +288,21 @@ class LpArray:
     def __neg__(self):
         return LpArray(-self.values, self.index, self.prob)
 
-    @property
+    @ property
     def shape(self) -> tuple:
         """Returns the shape of the values/index."""
         return self.values.shape
 
 
 class LpMatrix:
+    def __init__(self, data: Sequence[Sequence | LpArray] | np.ndarray | 'LpMatrix' = None,
+                 index: Sequence[float] = None, columns: Sequence[Any] = None, prob: LpProblem = None):
+        pass
+
+    @classmethod
+    def variable(cls) -> 'LpMatrix':
+        pass
+
     def to_tensor(self) -> 'LpTensor':
         pass
 
@@ -287,7 +313,6 @@ class LpTensor:
 
 
 if __name__ == '__main__':
-    a = LpArray.variable('Lineup', [1, 1.5, 2, 3, 6], cat=int)
-    b = LpArray.variable('Bench', range(5), cat=int)
-    x = a | - b
-    print(x)
+    a = LpArray.variable('Bench', range(10), cat=int)
+    b = LpArray.variable('Lineup', range(5), cat=int)
+    c = LpArray.variable('Lineup', [5, 3, 4, 2, 1], cat=int)
