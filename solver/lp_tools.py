@@ -116,13 +116,14 @@ class LpArray:
         for value in self.values:
             yield value
 
-    def __getitem__(self, item: float | Sequence[bool]) -> Any:
+    def __getitem__(self, item: float | Sequence[bool], by: Literal['index', 'location'] = 'index') -> Any:
         """Returns item or subset of items from `self.values`, By index *OR* binary inclusion sequence.\
             Works only if item is not repeated in `self.index`.
 
         Args:
             item (float | Sequence[bool]): Index corrresponding to wanted value, or sequence of binary values, where \
                 nth element corresponds to whether to include nth index/value pair in output `LpArray`
+            by (Literal['index', 'location']): Treat item as index or location reference. Defaults to `'index'`
 
         Raises:
             ValueError: Invalid index or filter
@@ -132,14 +133,23 @@ class LpArray:
         """
         match item:
             case float() | int() | np.int64():  # For 0d index references
-                index = self.index.tolist().index(item)  # Get item as index
-                return self.values[index]   # Return corresponding value
+                if by == 'index':
+                    item = self.index.tolist().index(item)  # Get item as index
+                return self.values[item]   # Return corresponding value
 
             case Sequence:  # 1d index references
                 try:
                     return self.filter(item)    # Try item as binary filter
                 except ValueError:
-                    return self.get_subset(item)    # Try item as sequence of indices
+                    return self.get_subset(item, by)    # Try item as sequence of indices
+
+    def __setitem__(self, key, value, by: Literal['index', 'location'] = 'index') -> None:
+        match key:
+            case float() | int() | np.int64():
+                pass
+
+            case Sequence:
+                pass
 
     def filter(self, item: Sequence[bool], inplace: bool = False) -> 'LpArray':
         """Filter `LpArray` using a binary sequence of the same length.
@@ -196,7 +206,7 @@ class LpArray:
 
         return LpArray(self.values[item], self.index[item], self.prob)
 
-    def sort_index(self):
+    def sort_index(self) -> None:
         self.values = np.array([val for _, val in sorted(zip(self.index, self.values))])
         self.index = sorted(self.index)
 
@@ -303,6 +313,18 @@ class LpMatrix:
     def variable(cls) -> 'LpMatrix':
         pass
 
+    def __str__(self) -> str:
+        pass
+
+    def __len__(self) -> int:
+        pass
+
+    def __iter__(self) -> Generator:
+        pass
+
+    def operation(self) -> 'LpMatrix':
+        pass
+
     def to_tensor(self) -> 'LpTensor':
         pass
 
@@ -314,5 +336,5 @@ class LpTensor:
 
 if __name__ == '__main__':
     a = LpArray.variable('Bench', range(10), cat=int)
-    b = LpArray.variable('Lineup', range(5), cat=int)
-    c = LpArray.variable('Lineup', [5, 3, 4, 2, 1], cat=int)
+    a[5] = 0
+    print(a)
