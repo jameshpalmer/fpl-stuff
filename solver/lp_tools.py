@@ -12,7 +12,7 @@ between classes, and constraints can be added when associated with LpProblem (ou
 import pulp
 import numpy as np
 import pandas as pd
-from typing import Union, Literal, Callable, Sequence, Any
+from typing import Generator, Union, Literal, Callable, Sequence, Any
 from operator import add, sub, mul
 
 
@@ -105,13 +105,13 @@ class LpArray:
             return 'LpArray([])'
 
         return '\n'.join(str(pd.Series([str(i) for i in self.values], self.index)).split(
-            '\n')[:-1]) + f"\nLength: {len(self)}, dtype: {type(self.values[0]).__name__}"
+            '\n')[:-1]) + f"\nLength: {len(self)}, dtype: {type(self.values[0]).__name__}\n"
 
     def __len__(self) -> int:
         """Returns the length of the index."""
         return len(self.index)
 
-    def __iter__(self):
+    def __iter__(self) -> Generator:
         """Iterate through `self.values`"""
         for value in self.values:
             yield value
@@ -161,7 +161,7 @@ class LpArray:
         if not all([(i in (0, 1)) for i in item]):  # Filter is not binary
             raise ValueError(f"Invalid LpArray filter: {item} is not a binary sequence")
 
-        # Return LpArray with only "1" indices still in place
+        # Return LpArray with only "1" indices still in place, removing "0" indices and corresponding values
         if inplace:
             self.data = np.array([self[index] for index, i in zip(self.index, item) if i == 1])
             self.index = np.array([self.index[index] for index, i in enumerate(item) if i == 1])
@@ -207,25 +207,35 @@ class LpArray:
 
         match other:
             case LpArray() | pd.Series():
-                if (other.index == self.index).all():
+                if (len(self) == len(other)) and (other.index == self.index).all():  # Self and other have same index
                     # Add values of self and other
                     return LpArray(operation(self.values, other.values), self.index, prob)
                 elif drop:
                     intersect = np.intersect1d(self.index, other.index)  # Get common indices
                     # Apply operations to common indices
-                    return LpArray(operation(self.values[intersect], other.values[intersect]), intersect, prob)
+                    return LpArray(operation(self[intersect], other[intersect]), intersect, prob)
 
                 intersect = np.intersect1d(self.index, other.index)  # Get common indices
                 # Get non-commin indices
                 diff_self = np.setdiff1d(self.index, other.index)
                 diff_other = np.setdiff1d(other.index, self.index)
+                print(intersect, diff_self, diff_other)
 
                 # Concatenate arrays of indices
-                index = np.concatenate([np.atleast_1d(a) for a in (intersect, diff_self, diff_other)])
+                index = np.concatenate([np.atleast_1d(a) for a in (diff_self, intersect, diff_other)])
                 # Get values associated with index
-                values = np.concatenate([np.atleast_1d(a) for a in (
-                    operation(self[intersect], other[intersect]), self[diff_self], other[diff_other])])
-                return LpArray(values, index, prob)
+                values = np.concatenate([np.atleast_1d(a) for a in (self[diff_self],
+                                                                    operation(self[intersect], other[intersect]), other[diff_other])])
+
+                if np.all(index[:-1] <= index[1:]):  # Case if index is sorted
+                    return LpArray(values, index, prob)
+
+                # Put all index/value pairs into dict
+                values_dict = {index: value for index, value in zip(intersect, operation(self[intersect], other[intersect]))} | {
+                    index: value for index, value in zip(diff_self, self[diff_self])} | {
+                        index: value for index, value in zip(diff_other, other[diff_other])}
+                return_data = (list(zip(*sorted(values_dict.items()))))  # Unzip sorted dict
+                return LpArray(return_data[1], return_data[0], prob)    # LpArray containing all data
 
             case np.ndarray() | list():
                 if len(other) != len(self):  # other must be same size, for convenience
@@ -244,6 +254,9 @@ class LpArray:
         return self.operator(add, other, drop)
     __radd__ = __add__
 
+    def __or__(self, other, drop=False):
+        return self.__add__(other, drop=drop)
+
     def __sub__(self, other, drop=True):
         return self.operator(sub, other, drop)
 
@@ -258,7 +271,7 @@ class LpArray:
         return LpArray(-self.values, self.index, self.prob)
 
     @property
-    def shape(self):
+    def shape(self) -> tuple:
         """Returns the shape of the values/index."""
         return self.values.shape
 
@@ -274,9 +287,7 @@ class LpTensor:
 
 
 if __name__ == '__main__':
-    a = LpArray.variable('Bench', range(100), cat=int)
-    a.index += 10
-    b = LpArray.variable('Lineup', range(100), cat=int)
-    x = a + b - 1
-    for i in x:
-        print(i)
+    a = LpArray.variable('Lineup', [1, 1.5, 2, 3, 6], cat=int)
+    b = LpArray.variable('Bench', range(5), cat=int)
+    x = a | - b
+    print(x)
