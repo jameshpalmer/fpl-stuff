@@ -2,37 +2,47 @@
 
 Classes allow multi-dimensional arrays of objects to be processed in parallel using element-wise operations, with full
 support for `pulp.LpVariable` objects, unlike `numpy` or `pandas` classes. Arithmetic operations avaible across and
-between classes, and constraints can be added when associated with LpProblem (outer class for `pulp.LpProblem`).
+between classes, and constraints can be added when associated with pulp.LpProblem (outer class for `pulp.LpProblem`).
 
     Typical usage example:
 
     # TODO
 
 """
+from types import NoneType
 import pulp
 import numpy as np
 import pandas as pd
-from typing import Generator, Union, Literal, Callable, Sequence, Any
+from typing import Generator, Type, Union, Literal, Callable, Sequence, Any
 from operator import add, sub, mul
 
 
 class LpProblem:
-    pass
+    """Outer class for pulp.LpProblem, with syntactical support for constraint addition with `LpArray`, \
+    `LpMatrix`, and `LpTensor` objects.
+    """
+
+    def __init__(self, name, sense, ):
+        pass
+
+    def aeq(self, other):
+        pass
 
 
 class LpArray:
     """1-Dimensional `pandas.Series`-like structure with support for `pulp.LpVariable` objects, and support for \
-    applying element-wise PuLP constraints when associated with `LpProblem`.
+    applying element-wise PuLP constraints when associated with `pulp.LpProblem`.
     """
 
-    def __init__(self, data: Sequence | 'LpArray' = None, index: Sequence[float] = None, prob: LpProblem = None):
+    def __init__(self, data: Sequence | 'LpArray' = None, index: Sequence[float] = None, prob: pulp.LpProblem = None):
         """This class models an array with the following parameters:
 
         Args:
             data (Sequence, optional): Values contained in `LpArray`. Defaults to `None`
             index (Sequence[float], optional): Indices (usually `int`) paired to corrresponding values. Defaults to \
                  `None`
-            prob (LpProblem, optional): Associated `LpProblem` object for constraint application. Defaults to `None`
+            prob (pulp.LpProblem, optional): Associated `pulp.LpProblem` object for constraint application.\
+                Defaults to `None`
         """
         # Default for values and index are empty
         if data is None:
@@ -59,13 +69,13 @@ class LpArray:
         self.values, self.index, self.prob = np.array(data), np.array(index), prob
 
     @classmethod
-    def from_dict(cls, data: dict = None, prob: LpProblem = None, sort_index: bool = False) -> 'LpArray':
+    def from_dict(cls, data: dict = None, prob: pulp.LpProblem = None, sort_index: bool = False) -> 'LpArray':
         """Initialise `LpArray` with data from `dict`, with the following parameters:
 
         Args:
             data (dict, optional): `dict` (length n) object containing `{index[0]: values[0], index[1]: values[1], \
                   ..., index[n]: values[n]}`. Defaults to `None`
-            prob (LpProblem, optional): LpProblem associated with LpArray instance. Defaults to `None`
+            prob (pulp.LpProblem, optional): pulp.LpProblem associated with LpArray instance. Defaults to `None`
             sort_index (bool, optional): If `True`, return `LpArray.from_dict(dict(sorted(dict.values())), ...)`
 
         Returns:
@@ -77,7 +87,7 @@ class LpArray:
 
     @classmethod
     def variable(cls, name: str, index: Sequence[float] = None, lower: float = None, upper: float = None,
-                 cat: type[bool | int | float] = None, prob: LpProblem = None) -> 'LpArray[pulp.LpVariable]':
+                 cat: type[bool | int | float] = None, prob: pulp.LpProblem = None) -> 'LpArray[pulp.LpVariable]':
         """Initialise `LpArray` containing `pulp.LpVariable` objects, with the following parameters:
 
         Args:
@@ -86,7 +96,7 @@ class LpArray:
             lower (float, optional): Lower bound for variables to be created. Defaults to `None`
             upper (float, optional): Upper bound for variables to be created. Defaults to `None`
             cat (type, optional): Category of variables: `bool`, `int`, or `float`. Defaults to `float`
-            prob (LpProblem, optional): LpProblem associated with variables
+            prob (pulp.LpProblem, optional): pulp.LpProblem associated with variables
 
         Returns:
             LpArray: with values that are pulp.LpVariable instances, named f'{name}_{i}' for all i in index
@@ -116,7 +126,7 @@ class LpArray:
         for value in self.values:
             yield value
 
-    def __getitem__(self, item: float | Sequence[bool], by: Literal['index', 'location'] = 'index') -> Any:
+    def __getitem__(self, item: float | Sequence[float | bool], by: Literal['index', 'location'] = 'index') -> Any:
         """Returns item or subset of items from `self.values`, By index *OR* binary inclusion sequence.\
             Works only if item is not repeated in `self.index`.
 
@@ -137,21 +147,45 @@ class LpArray:
                     item = self.index.tolist().index(item)  # Get item as index
                 return self.values[item]   # Return corresponding value
 
-            case Sequence:  # 1d index references
+            case [*items]:  # 1d index references
                 try:
-                    return self.filter(item)    # Try item as binary filter
+                    return self.filter(item, inplace=True)    # Try item as binary filter
                 except ValueError:
                     return self.get_subset(item, by)    # Try item as sequence of indices
 
-    def __setitem__(self, key, value, by: Literal['index', 'location'] = 'index') -> None:
+    def __setitem__(self, key: float | Sequence[float], value: Any,
+                    by: Literal['index', 'location'] = 'index') -> None:
+        """Set key (or sequence of keys) in `LpArray` to given value (set of values)
+
+        Args:
+            key (float | Sequence[float]): Key of item to be set
+            value (Any): Value (or sequence of values) of set item
+            by (Literal['index', 'location'], optional): Whether key corresponds to index or location.\
+                Defaults to 'index'.
+        """
         match key:
             case float() | int() | np.int64():
-                pass
+                if by == 'index':
+                    key = self.index.tolist().index(key)
+                self.values[key] = value
 
-            case Sequence:
-                pass
+            case [*keys]:
+                if by == 'index':
+                    keys = [self.index.tolist().index(k) for k in keys]
+                try:
+                    if len(keys) != len(value):
+                        raise ValueError(f"{keys} and {value} are not the same length ({len(keys)} and {len(value)})")
+                except TypeError:
+                    for k in keys:
+                        self.__setitem__(k, value, by='location')
+                    return
+                for k, val in zip(keys, value):
+                    self.__setitem__(k, val, by='location')
 
-    def filter(self, item: Sequence[bool], inplace: bool = False) -> 'LpArray':
+            case _:
+                raise TypeError(f"Type {type(key).__name__} is not a valid {by} selection")
+
+    def filter(self, item: Sequence[bool], inplace: bool = False) -> Union[None, 'LpArray']:
         """Filter `LpArray` using a binary sequence of the same length.
 
         Args:
@@ -162,7 +196,7 @@ class LpArray:
             ValueError: Attempt to filter with non-binary or differently-sized data
 
          Returns:
-             LpArray: Filtered LpArray
+             LpArray | None: Filtered LpArray if not inplace
          """
         if len(item) != len(self):  # Filter has the wrong length
             raise ValueError(
@@ -196,15 +230,64 @@ class LpArray:
         """
         if sorted:
             if by == 'index':
-                return self.filter([int(i in item) for i in self.index])    # Filter self by corresponding index
+                # Filter self by corresponding index
+                return self.filter([int(i in item) for i in self.index], inplace=True)
             elif by == 'location':
-                return self.filter([int(i in item) for i in range(len(self))])  # Filter self by corresponding location
+                # Filter self by corresponding location
+                return self.filter([int(i in item) for i in range(len(self))], inplace=True)
             raise(ValueError(f"Argument 'by' must be one of ('index', 'location'), not {by}"))
 
         if by == 'index':
             item = [np.where(self.index == i)[0][0] for i in item]  # Change item from index to location reference
 
         return LpArray(self.values[item], self.index[item], self.prob)
+
+    def drop(self, item: float | Sequence[float], by: Literal['index', 'location'] = 'index',
+             inplace: bool = False) -> Union[None, 'LpArray']:
+        """Remove element from LpArray by its index or location
+
+        Args:
+            item (_type_): Index/location or sequence of indices/locations to be dropped
+            by (Literal['index', 'location'], optional): If elements are to be selected by index or location.\
+                Defaults to `'index'`
+            inplace (bool): True => drop from existing object. False => return copy with elements dropped.\
+                Defaults to `False`
+
+        Raises:
+            TypeError: If item type is not a float or sequence
+        """
+        match item:
+            case float() | int() | np.int64():
+                if by == 'index':
+                    item = self.index.tolist().index(item)
+
+            case [*items]:
+                if by == 'index':
+                    item = [self.index.tolist().index(i) for i in items]
+
+            case _:
+                raise TypeError(f"Type {type(item).__name__} cannot be dropped")
+
+        if not inplace:
+            return LpArray(np.delete(self.values, item), np.delete(self.index, item), self.prob)
+        self.index, self.values = np.delete(self.index, item), np.delete(self.values, item)
+
+    def remove(self, value: Any, inplace: bool = False) -> Union[None, 'LpArray']:
+        """Remove element from `LpArray` by value
+
+        Args:
+            value (Any): Value of element to be removed
+        """
+        match value:
+            case float() | int() | np.int64():
+                item = self.values.tolist().index(value)
+
+            case [*values]:
+                item = [self.values.tolist().index(val) for val in values]
+
+        if not inplace:
+            return self.drop(item, by='location')
+        self.drop(item, by='location', inplace=True)
 
     def sort_index(self) -> None:
         self.values = np.array([val for _, val in sorted(zip(self.index, self.values))])
@@ -238,8 +321,6 @@ class LpArray:
                     return LpArray(operation(self.values, other.values), self.index, prob)
                 elif drop:
                     intersect = np.intersect1d(self.index, other.index)  # Get common indices
-                    print(self[intersect], other[intersect])
-                    print(intersect)
                     # Apply operations to common indices
                     return LpArray(operation(self[intersect], other[intersect]), intersect, prob)
 
@@ -306,7 +387,7 @@ class LpArray:
 
 class LpMatrix:
     def __init__(self, data: Sequence[Sequence | LpArray] | np.ndarray | 'LpMatrix' = None,
-                 index: Sequence[float] = None, columns: Sequence[Any] = None, prob: LpProblem = None):
+                 index: Sequence[float] = None, columns: Sequence[Any] = None, prob: pulp.LpProblem = None):
         pass
 
     @classmethod
@@ -336,5 +417,6 @@ class LpTensor:
 
 if __name__ == '__main__':
     a = LpArray.variable('Bench', range(10), cat=int)
-    a[5] = 0
-    print(a)
+    a.index += 4
+    a.drop((4, 5, 7, 8), inplace=True)
+    print(a + [5, 6] * 3)
