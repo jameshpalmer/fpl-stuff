@@ -9,11 +9,10 @@ between classes, and constraints can be added when associated with pulp.LpProble
     # TODO
 
 """
-from types import NoneType
 import pulp
 import numpy as np
 import pandas as pd
-from typing import Generator, Type, Union, Literal, Callable, Sequence, Any
+from typing import Generator, Union, Literal, Callable, Sequence, Tuple, Any
 from operator import add, sub, mul
 
 
@@ -23,10 +22,47 @@ class LpProblem:
     """
 
     def __init__(self, name, sense, ):
-        pass
+        self.model = pulp.LpProblem(name, sense)
 
-    def aeq(self, other):
-        pass
+    def aeq(self, *other):
+        for constraint in other:
+            self.model += constraint
+
+
+class LpIndexer:
+    def __init__(self, object: Union['LpArray', 'LpMatrix', 'LpTensor'],
+                 index_type: Literal['index', 'location'] = 'index'):
+        self.object = object
+
+        if index_type == 'location':
+            self.object.index = np.array(range(len(object)))
+        if object.dim > 2:
+            self.levels = object.levels
+        elif object.dim > 1:
+            self.columns = object.columns
+
+    def __getitem__(self, item):
+        if type(self.object) == LpArray:
+            subset = self.object[item]
+            if len(subset) == 1:
+                return subset.values[0]
+            elif len(subset) > 1:
+                return subset.values
+
+        match item:
+            case float() | int() | np.int64():
+                if type(self.object) == LpMatrix:
+                    pass
+
+                elif type(self.object) == LpTensor:
+                    pass
+
+            case tuple:
+                if type(self.object) == LpMatrix:
+                    pass
+
+                elif type(self.object) == LpTensor:
+                    pass
 
 
 class LpArray:
@@ -67,6 +103,7 @@ class LpArray:
                 self.prob = data.prob
 
         self.values, self.index, self.prob = np.array(data), np.array(index), prob
+        self.dim = 1
 
     @classmethod
     def from_dict(cls, data: dict = None, prob: pulp.LpProblem = None, sort_index: bool = False) -> 'LpArray':
@@ -141,17 +178,10 @@ class LpArray:
         Returns:
             Any: Value corresponding to passed index, or `LpArray` corresponding to passed binary inclusion sequence
         """
-        match item:
-            case float() | int() | np.int64():  # For 0d index references
-                if by == 'index':
-                    item = self.index.tolist().index(item)  # Get item as index
-                return self.values[item]   # Return corresponding value
-
-            case [*items]:  # 1d index references
-                try:
-                    return self.filter(item, inplace=True)    # Try item as binary filter
-                except ValueError:
-                    return self.get_subset(item, by)    # Try item as sequence of indices
+        try:
+            return self.filter(item, inplace=True)    # Try item as binary filter
+        except (ValueError, TypeError):  # Non-binary or zero length
+            return self.get_subset(item, by)    # Try item as sequence of indices
 
     def __setitem__(self, key: float | Sequence[float], value: Any,
                     by: Literal['index', 'location'] = 'index') -> None:
@@ -164,25 +194,25 @@ class LpArray:
                 Defaults to 'index'.
         """
         match key:
-            case float() | int() | np.int64():
+            case float() | int() | np.int64():  # Single item to be set
                 if by == 'index':
-                    key = self.index.tolist().index(key)
+                    key = self.index.tolist().index(key)    # Get location of index value
                 self.values[key] = value
 
-            case [*keys]:
+            case [*keys]:   # Multiple items to be set
                 if by == 'index':
-                    keys = [self.index.tolist().index(k) for k in keys]
-                try:
+                    keys = [self.index.tolist().index(k) for k in keys]    # Get locations of index values
+                try:    # Assume case: value is a sequence
                     if len(keys) != len(value):
                         raise ValueError(f"{keys} and {value} are not the same length ({len(keys)} and {len(value)})")
-                except TypeError:
+                except TypeError:   # Case: value is not a sequence
                     for k in keys:
                         self.__setitem__(k, value, by='location')
                     return
                 for k, val in zip(keys, value):
                     self.__setitem__(k, val, by='location')
 
-            case _:
+            case _:  # Unexpected key type
                 raise TypeError(f"Type {type(key).__name__} is not a valid {by} selection")
 
     def filter(self, item: Sequence[bool], inplace: bool = False) -> Union[None, 'LpArray']:
@@ -228,6 +258,8 @@ class LpArray:
         Returns:
             LpArray: Containing only the subset of wanted elements
         """
+        if type(item) in (float, int, np.int64):
+            item = [item]
         if sorted:
             if by == 'index':
                 # Filter self by corresponding index
@@ -238,9 +270,20 @@ class LpArray:
             raise(ValueError(f"Argument 'by' must be one of ('index', 'location'), not {by}"))
 
         if by == 'index':
-            item = [np.where(self.index == i)[0][0] for i in item]  # Change item from index to location reference
+            try:
+                item = [np.where(self.index == i)[0][0] for i in item]  # Change item from index to location reference
+            except IndexError:  # Item not in index
+                return LpArray()
 
         return LpArray(self.values[item], self.index[item], self.prob)
+
+    @property
+    def loc(self):
+        return LpIndexer(self, 'index')
+
+    @property
+    def iloc(self):
+        return LpIndexer(self, 'location')
 
     def drop(self, item: float | Sequence[float], by: Literal['index', 'location'] = 'index',
              inplace: bool = False) -> Union[None, 'LpArray']:
@@ -257,15 +300,15 @@ class LpArray:
             TypeError: If item type is not a float or sequence
         """
         match item:
-            case float() | int() | np.int64():
+            case float() | int() | np.int64():  # Drop single element
                 if by == 'index':
                     item = self.index.tolist().index(item)
 
-            case [*items]:
+            case [*items]:  # Drop sequence of elements
                 if by == 'index':
                     item = [self.index.tolist().index(i) for i in items]
 
-            case _:
+            case _:  # Unrecognized type of element index/location
                 raise TypeError(f"Type {type(item).__name__} cannot be dropped")
 
         if not inplace:
@@ -289,7 +332,17 @@ class LpArray:
             return self.drop(item, by='location')
         self.drop(item, by='location', inplace=True)
 
-    def sort_index(self) -> None:
+    def lag(self, lag_value: int = 1, inplace: bool = False) -> Union[None, 'LpArray']:
+        """Translate (in increasing directions) LpArray index by given value"""
+        if not inplace:
+            return LpArray(self.values, self.index + lag_value, self.prob)
+        self.index += lag_value
+
+    def sort_index(self, inplace=False) -> None:
+        """Sort index of LpArray"""
+        if not inplace:
+            return LpArray(np.array([val for _, val in sorted(zip(self.index, self.values))]),
+                           sorted(self.index), self.prob)
         self.values = np.array([val for _, val in sorted(zip(self.index, self.values))])
         self.index = sorted(self.index)
 
@@ -403,6 +456,12 @@ class LpMatrix:
     def __iter__(self) -> Generator:
         pass
 
+    def filter(self) -> Union[None, 'LpArray']:
+        pass
+
+    def drop(self) -> Union[None, 'LpMatrix']:
+        pass
+
     def operation(self) -> 'LpMatrix':
         pass
 
@@ -420,3 +479,5 @@ if __name__ == '__main__':
     a.index += 4
     a.drop((4, 5, 7, 8), inplace=True)
     print(a + [5, 6] * 3)
+    print(a)
+    print(a.iloc[0])
