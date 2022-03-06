@@ -15,12 +15,10 @@ import pulp
 import numpy as np
 import pandas as pd
 from typing import Generator, Union, Literal, Callable, Sequence, Any
-from operator import add, sub, mul
+from operator import add, sub, mul, eq, le, ge
 from collections.abc import Generator
 from collections import defaultdict
-
-
-from pyparsing import col
+import itertools
 
 
 class LpProblem:
@@ -45,13 +43,15 @@ class LpProblem:
         match other:
             case Generator() as constraints:
                 for const in constraints:
-                    self.model += const
+                    self.model.addConstraint(const)
 
             case pulp.pulp.LpConstraint() | pulp.pulp.LpAffineExpression() | pulp.pulp.LpVariable() as const:
-                self.model += const
+                self.model.addConstraint(const)
 
             case _:
                 raise TypeError(f"Type {type(other).__name__} cannot be applied to LP problem")
+
+        return self
 
     def solve(self, time_limit=10000, optimizer=pulp.GUROBI, message=True) -> None:
         """Solve LpModel"""
@@ -153,7 +153,7 @@ class LpArray:
 
     @classmethod
     def variable(cls, name: str = "NoName", index: Sequence[float] = None, lower: float = None, upper: float = None,
-                 cat: type[bool | int | float] = None) -> 'LpArray[pulp.LpVariable]':
+                 cat: type[bool | int | float] = float) -> 'LpArray[pulp.LpVariable]':
         """Initialise `LpArray` containing `pulp.LpVariable` objects, with the following parameters:
 
         Args:
@@ -329,6 +329,9 @@ class LpArray:
 
         Raises:
             TypeError: If item type is not a float or sequence
+
+        Returns:
+            LpArray: with relevant elements dropped
         """
         match item:
             case float() | int() | np.int64():  # Drop single element
@@ -432,7 +435,7 @@ class LpArray:
                         f"cannot {operation.__name__} 'LpArray' to '{type(other).__name__}' of different size")
                 return LpArray(operation(self.values, other), self.index)
 
-            case float() | int() | np.int64():
+            case float() | int() | np.int64() | pulp.pulp.LpVariable() | pulp.pulp.LpAffineExpression():
                 return LpArray(operation(self.values, other), self.index)
 
             case _:  # Invalid data type for operation
@@ -484,11 +487,11 @@ class LpArray:
         """
         match other:
             case float() | int() | np.int64() | pulp.LpAffineExpression() | pulp.pulp.LpVariable():
-                return (pulp.LpConstraint(value, sense, rhs=other) for value in self.values)
+                return (sense(value, other) for value in self.values)
 
             case LpArray() | pd.Series():  # Apply constraints between two LpArrays
                 if len(other) == len(self):  # Elementwise constraints
-                    return (pulp.LpConstraint(value, sense, rhs=rhs) for value, rhs in zip(self.values, other.values))
+                    return (sense(value, rhs) for value, rhs in zip(self.values, other.values))
                 elif len(other) == 1:   # Same constraint on all elements
                     return self.add_constraint(other.loc[0], sense)
                 raise ValueError(
@@ -496,7 +499,7 @@ class LpArray:
 
             case [*others]:  # Iterable sequence
                 if len(other) == len(self):  # Elementwise constraints
-                    return (pulp.LpConstraint(value, sense, rhs=rhs) for value, rhs in zip(self.values, other))
+                    return (sense(value, rhs) for value, rhs in zip(self.values, other))
                 elif len(other) == 1:   # Same constraint on all elements
                     return self.add_constraint(other[0], sense)
                 raise ValueError(
@@ -506,13 +509,13 @@ class LpArray:
                 raise TypeError(f"LP Constriant cannot be applied to {other}")
 
     def __eq__(self, other):
-        return self.add_constraint(other, pulp.const.LpConstraintEQ)
+        return self.add_constraint(other, eq)
 
     def __le__(self, other):
-        return self.add_constraint(other, pulp.const.LpConstraintLE)
+        return self.add_constraint(other, le)
 
     def __ge__(self, other):
-        return self.add_constraint(other, pulp.const.LpConstraintGE)
+        return self.add_constraint(other, le)
 
 
 class LpMatrix:
@@ -560,10 +563,16 @@ class LpMatrix:
     def from_dict(cls, data) -> 'LpMatrix':
         """Generate LpMatrix instance from dict with following structure:\
             `{col_1: {index_1: i_11, ..., index_n: i_n1}, ...col_m: {index_1: i_1m, ..., index_n: i_nm}`"""
-        return cls(np.array([list(d.values()) for d in data.values()]).T,
-                   list(list(data.values())[0].keys()), list(data.keys()))
+        match data[0]:
+            case dict():
+                return cls(np.array([list(d.values()) for d in data.values()]).T,
+                           list(list(data.values())[0].keys()), list(data.keys()))
 
-    @classmethod
+            case LpArray():
+                return cls(np.array([array.values for array in data.values()]).T, list(data.values())[0].index,
+                           list(data.keys()))
+
+    @ classmethod
     def variable(cls, name: str = "NoName", index: Sequence[float] = None,
                  columns: Sequence[Any] = None, lower: float = None, upper: float = None,
                  cat: type[bool | int | float] = None) -> 'LpMatrix[pulp.LpVariable]':
@@ -593,7 +602,7 @@ class LpMatrix:
         return cls.from_dict(d)
 
     def __str__(self) -> str:
-        return str(pd.DataFrame(self.values, self.index, self.columns))
+        return str(pd.DataFrame(self.values, self.index, self.columns).astype(str))
 
     def __len__(self) -> int:
         return len(self.values)
@@ -635,9 +644,25 @@ class LpMatrix:
         return LpMatrix(self.values[item], self.index[item], self.columns)
 
     def get_subset(self, item: float | str | Sequence[float | bool] | tuple,
-                   by: Literal['index', 'location'] = 'index') -> Union[None, 'LpMatrix']:
+                   by: Literal['index', 'location'] = 'index',
+                   inplace: bool = False) -> Union[None, 'LpMatrix']:
+        """_summary_
+
+        Args:
+            inplace: ONLY FOR MULTIPLE ROW AND COLUMN SELECTION
+
+        Raises:
+            ValueError: _description_
+            ValueError: _description_
+            TypeError: _description_
+
+        Returns:
+            _type_: _description_
+        """
         match item:
-            case float() | int() | np.int64() | str() as col:   # Single column wanted
+            case float() | int() | np.int64() | str() | slice() as col:   # Single column wanted
+                if type(item) == slice:
+                    return LpMatrix(self.values, self.index, self.columns)
                 if by == 'index':
                     try:
                         col = self.columns.tolist().index(col)
@@ -652,29 +677,136 @@ class LpMatrix:
                             self.columns.tolist().index(col) for col in columns]
                     except ValueError:
                         raise ValueError("Not all given indices and columns are in LpMatrix")
-
-                return LpMatrix(self.values[[[i] for i in indices], columns], self.index[indices], self.columns[columns])
+                if not inplace:
+                    return LpMatrix(self.values[[[i] for i in indices], columns],
+                                    self.index[indices], self.columns[columns])
+                self.values = self.values[[[i] for i in indices], columns]
+                self.index, self.columns = self.index[indices], self.columns[columns]
 
             case ([*indices], col):  # Non-trivial subset of index across one column
+                if type(col) == slice:
+                    return self.get_subset((indices, list(self.columns)), by=by)
                 return self[col].get_subset(indices, by=by)
 
             case (i, [*columns]):  # Non-trivial subset of columns across one index
+                if type(i) == slice:
+                    return self.get_subset((list(self.index), columns), by=by)
                 return self.T[i].get_subset(columns, by=by)
 
             case (i, col):  # Single entry in LpMatrix
+                if type(i) == slice:
+                    return self.get_subset((list(self.index), col), by=by)
+                elif type(col) == slice:
+                    return self.get_subset((i, list(self.columns)), by=by)
+
                 return self[col].get_subset(i, by=by)
+
+            case [*columns]:  # Non-trivial subset of columns
+                return self[:, columns]
 
             case _:
                 raise TypeError(f"{item} is not a valid index")
 
-    def drop(self) -> Union[None, 'LpMatrix']:
-        pass
+    def drop(self, *item:  float | Sequence[float], by: Literal['index', 'location'] = 'index',
+             axis: Literal[0, 1] = 0) -> Union[None, 'LpMatrix']:
+        """Remove element from LpArray by its index or location
+
+       Args:
+            item (float | Sequence[float]): Index/location or sequence of indices/locations to be dropped
+            by (Literal['index', 'location'], optional): If elements are to be selected by index or location.\
+                Defaults to `'index'`
+            inplace (bool): True => drop from existing object. False => return copy with elements dropped.\
+                Defaults to `False`
+            axis (Literal[0, 1]): `0` => row-wise operation, `1` => column-wise operation. Defaults to `0`
+
+        Returns:
+            LpMatrix: with relevant rows/columns dropped
+        """
+        try:
+            axis_obj = [self.index, self.columns][axis]
+        except IndexError:
+            raise ValueError(f"{axis} is not a valid axis. Must be 0 or 1")
+        match item:
+            case float() | int() | np.int64():  # Drop single element
+                if by == 'location':
+                    item = axis_obj[item]
+
+            case [*items]:  # Drop sequence of elements
+                if by == 'location':
+                    item = axis_obj[items]
+
+            case _:  # Unrecognized type of element index/location
+                raise TypeError(f"Type {type(item).__name__} cannot be dropped")
+
+        item = np.setdiff1d(axis_obj, np.array(item))
+
+        if axis == 1:
+            return self[:, list(item)]
+
+        else:
+            return self[list(item), :]
 
     def remove(self) -> Union[None, 'LpMatrix']:
-        pass
+        pass  # TODO
 
-    def operation(self) -> 'LpMatrix':
-        pass
+    def operator(self, operation: Callable, other: Union['LpArray', pd.Series, np.ndarray, list, float],
+                 drop: bool = True) -> 'LpMatrix':
+        match other:
+            case LpMatrix() | pd.DataFrame():
+                if list(other.index) == list(self.index) and list(other.columns) == list(self.columns):
+                    return LpMatrix(operation(self.values, other.values), self.index, self.columns)
+                if not drop:
+                    return
+                common_indices = np.intersect1d(self.index, other.index)
+                return LpMatrix.from_dict({
+                    col: self[list(common_indices), col].operator(
+                        operation, other[col][common_indices], drop) for col in self if col in other
+                })
+
+            case np.ndarray() | list() | LpArray() | pd.Series() | pulp.pulp.LpVariable() | pulp.pulp.LpAffineExpression():
+                if len(other) != len(self):
+                    raise ValueError(
+                        f"cannot {operation.__name__} 'LpMatrix' to '{type(other).__name__}' of different size")
+
+                return LpMatrix.from_dict({col: self[col].operator(operation, other, drop) for col in self})
+
+            case float() | int() | np.int64():
+                return LpMatrix(operation(self.values, other), self.index, self.columns)
+
+    # Apply generic operation method to specific operations
+    def __add__(self, other, drop=True):
+        return self.operator(add, other, drop)
+    __radd__ = __add__
+
+    def __or__(self, other, drop=False):
+        return self.__add__(other, drop=drop)
+
+    def __sub__(self, other, drop=True):
+        return self.operator(sub, other, drop)
+
+    def __rsub__(self, other, drop=True):
+        return -self.operator(sub, other, drop)
+
+    def __mul__(self, other, drop=True):
+        return self.operator(mul, other, drop)
+    __rmul__ = __mul__
+
+    def __neg__(self):
+        return LpArray(-self.values, self.index, self.columns)
+
+    def sum(self, axis: bool = 1) -> LpArray:
+        if axis == 1:
+            return LpArray([self[col].sum() for col in self], self.columns)
+        elif axis == 0:
+            return LpArray([self[i, :].sum() for i in self.index], self.index)
+        raise ValueError(f"Invalid axis for summation: {axis}")
+
+    def lag(self, lag_value: int = 1, axis: bool = 0) -> 'LpMatrix':
+        try:
+            axis = [self.index, self.columns][axis]
+        except IndexError:
+            raise ValueError(f"Invalid axis for lag: {axis}")
+        axis += 1
 
     def transpose(self, inplace=False) -> 'LpMatrix':
         if inplace:
@@ -687,7 +819,34 @@ class LpMatrix:
         return self.transpose()
 
     def to_tensor(self) -> 'LpTensor':
-        pass
+        pass  # TODO
+
+    def add_constraint(self, other: Union[float, 'LpArray', pd.Series, Sequence, pd.DataFrame, 'LpMatrix'],
+                       sense: type[pulp.const.LpConstraintEQ | pulp.const.LpConstraintLE | pulp.const.LpConstraintGE]
+                       ) -> Generator[pulp.LpConstraint]:
+        match other:
+            case pd.DataFrame() | LpMatrix():
+                columns = np.intersect1d(self.columns, other.columns)
+                print(columns)
+                constraints = itertools.chain()
+                for col in columns:
+                    constraints = itertools.chain(constraints, self[col].add_constraint(other[col], sense))
+                return (const for const in constraints)
+
+            case _:
+                constraints = itertools.chain()
+                for col in self.columns:
+                    constraints = itertools.chain(constraints, self[col].add_constraint(other, sense))
+                return (const for const in constraints)
+
+    def __eq__(self, other):
+        return self.add_constraint(other, eq)
+
+    def __le__(self, other):
+        return self.add_constraint(other, le)
+
+    def __ge__(self, other):
+        return self.add_constraint(other, ge)
 
 
 class LpTensor:
@@ -697,10 +856,12 @@ class LpTensor:
 
 if __name__ == '__main__':
     prob = LpProblem()
-    m = LpMatrix([[1, 2, 3], [4, 5, 6]], columns=[1, 2, 3])
-    d = LpMatrix.from_dict({2: {1: 1, 2: 2}, 3: {1: 3, 2: 4}})
-    print(d)
-    v = LpMatrix.variable('lineup', range(10), range(5), 0, 1, bool)
-    v.index += 1
-    print(v)
-    print(v[(1, 2), (1, 2)])
+    l = LpArray.variable("lineup", range(10))
+    b = LpArray.variable("bench", range(10))
+
+    lineup = LpMatrix.variable('lineup', range(10), range(5), 0, 1, bool)
+    bench = LpMatrix.variable('bench', range(10), range(5), 0, 1, bool)
+
+    prob += b == 0
+    prob += bench <= b
+    prob.solve()
